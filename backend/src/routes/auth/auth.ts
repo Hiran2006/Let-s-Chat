@@ -6,17 +6,48 @@ import bcrypt from "bcrypt"
 
 const router = Router();
 
-router.get("/login", (req, res) => {
-  const { username, password } = req.query;
-  if (username == "" || password == "") {
-    res
-      .status(400)
-      .json({ success: false, message: "Username and password are required" });
-  } else if (username === "admin" && password === "password") {
+router.post("/login", async (req, res) => {
+  try {
+    const { email, password } = req.body;
+    if (!email || !password) {
+      return res
+        .status(400)
+        .json({ success: false, message: "Email and password are required" });
+    }
+
+    const user: any = await users.getUserByEmail(email);
+    if (!user) {
+      return res
+        .status(401)
+        .json({ success: false, message: "Invalid credentials" });
+    }
+
+    const isMatch = await bcrypt.compare(password, user.password);
+    if (!isMatch) {
+      return res
+        .status(401)
+        .json({ success: false, message: "Invalid credentials" });
+    }
+
+    const payload = { email: user.email, name: user.name };
+    const signedAuthToken = signJwt(payload, " ", {
+      expiresIn: "1m",
+    });
+
     res
       .cookie(
+        "authToken",
+        signedAuthToken,
+        {
+          httpOnly: false,
+          secure: false,
+          sameSite: "strict",
+          path: "/",
+        }
+      )
+      .cookie(
         "refreshToken",
-        signJwt({ username }, ENV.JWT_REFRESH_SECRET_KEY, { expiresIn: "7d" }),
+        signJwt(payload, ENV.JWT_REFRESH_SECRET_KEY, { expiresIn: "7d" }),
         {
           httpOnly: true,
           secure: false,
@@ -26,31 +57,48 @@ router.get("/login", (req, res) => {
       )
       .json({
         success: true,
-        infoToken: signJwt({ username }, " "),
-        authToken: signJwt({ username }, ENV.JWT_ACCESS_SECRET_KEY, {
-          expiresIn: "1m",
-        }),
+        infoToken: signJwt(payload, " "),
       });
-  } else {
-    res.json({ success: false, message: "Invalid credentials" });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ success: false, message: "Internal server error" });
   }
 });
 
-router.get("/refresh", (req, res) => {
-  const refreshToken = req.cookies.refreshToken;
-  const { iat, exp, ...payload } = verifyJwt(
-    refreshToken,
-    ENV.JWT_REFRESH_SECRET_KEY,
-  ) as JwtPayload;
-  if (!payload) {
-    return res
-      .status(401)
-      .json({ success: false, message: "Invalid refresh token" });
+router.get("/refresh", (req, res): any => {
+  try {
+    const refreshToken = req.cookies.refreshToken;
+    if (!refreshToken) {
+      return res
+        .status(401)
+        .json({ success: false, message: "Refresh token missing" });
+    }
+
+    const decoded = verifyJwt(refreshToken, ENV.JWT_REFRESH_SECRET_KEY) as JwtPayload | null;
+    if (!decoded) {
+      return res
+        .status(401)
+        .json({ success: false, message: "Invalid refresh token" });
+    }
+
+    const { iat, exp, ...payload } = decoded;
+    const newAuthToken = signJwt(payload, ENV.JWT_ACCESS_SECRET_KEY, { expiresIn: "1m" });
+
+    res
+      .cookie("authToken", newAuthToken, {
+        httpOnly: false,
+        secure: false,
+        sameSite: "strict",
+        path: "/",
+      })
+      .json({
+        success: true,
+        authToken: newAuthToken,
+      });
+  } catch (error) {
+    console.error("Refresh token error:", error);
+    res.status(500).json({ success: false, message: "Internal server error" });
   }
-  res.json({
-    success: true,
-    authToken: signJwt(payload, ENV.JWT_ACCESS_SECRET_KEY, { expiresIn: "1m" }),
-  });
 });
 
 router.post("/register", async (req, res) => {

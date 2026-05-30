@@ -7,7 +7,7 @@ database.serialize(() => {
 
   database.run(`
     CREATE TABLE IF NOT EXISTS users (
-      id INT PRIMARY KEY,
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
       name TEXT NOT NULL,
       email TEXT NOT NULL UNIQUE,
       password TEXT NOT NULL,
@@ -17,7 +17,7 @@ database.serialize(() => {
 
   database.run(`
     CREATE TABLE IF NOT EXISTS chats (
-      id INT PRIMARY KEY,
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
       type TEXT NOT NULL CHECK (type IN ('private', 'group')),
       name TEXT,
       created_at DATETIME DEFAULT CURRENT_TIMESTAMP
@@ -26,9 +26,9 @@ database.serialize(() => {
 
   database.run(`
     CREATE TABLE IF NOT EXISTS chat_members (
-      id INT PRIMARY KEY,
-      user_id INT NOT NULL,
-      chat_id INT NOT NULL,
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      user_id INTEGER NOT NULL,
+      chat_id INTEGER NOT NULL,
       joined_at DATETIME DEFAULT CURRENT_TIMESTAMP,
 
       FOREIGN KEY (user_id) REFERENCES users(id),
@@ -40,9 +40,9 @@ database.serialize(() => {
 
   database.run(`
     CREATE TABLE IF NOT EXISTS messages (
-      id INT PRIMARY KEY,
-      chat_id INT NOT NULL,
-      sender_id INT NOT NULL,
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      chat_id INTEGER NOT NULL,
+      sender_id INTEGER NOT NULL,
       text TEXT NOT NULL,
       created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
       updated_at DATETIME,

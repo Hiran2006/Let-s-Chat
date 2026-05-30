@@ -13,6 +13,24 @@ const isEmailExist = (email: string) => {
   });
 };
 
+const getUserByEmail = (email: string) => {
+  return new Promise<any>((resolve, reject) => {
+    db.get("select * from users where email=?", [email], (err, row) => {
+      if (err) reject(err);
+      else resolve(row || null);
+    });
+  });
+};
+
+const getAllUsers = () => {
+  return new Promise<any[]>((resolve, reject) => {
+    db.all("select id, name, email from users", [], (err, rows) => {
+      if (err) reject(err);
+      else resolve(rows || []);
+    });
+  });
+};
+
 const createNewUser = async(email: string, password: string, name: string) => {
     return db.run("insert into users(name,email,password) values(?,?,?)", [
       name,
@@ -21,4 +39,4 @@ const createNewUser = async(email: string, password: string, name: string) => {
     ]);
 };
 
-export default { isEmailExist, createNewUser };
+export default { isEmailExist, getUserByEmail, createNewUser, getAllUsers };
