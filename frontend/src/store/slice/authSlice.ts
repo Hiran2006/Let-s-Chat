@@ -9,13 +9,6 @@ export interface AuthState {
   error: string | null;
 }
 
-const initialState: AuthState = {
-  name: "",
-  email: "",
-  loading: false,
-  error: null,
-};
-
 // Helper function to decode JWT client-side without external dependencies
 function decodeJwt(token: string) {
   try {
@@ -32,6 +25,28 @@ function decodeJwt(token: string) {
     return null;
   }
 }
+
+// Helper function to get a cookie value by name client-side
+function getCookie(name: string): string | null {
+  try {
+    const value = `; ${document.cookie}`;
+    const parts = value.split(`; ${name}=`);
+    if (parts.length === 2) return parts.pop()!.split(';').shift() || null;
+  } catch {
+    return null;
+  }
+  return null;
+}
+
+const token = getCookie("authToken");
+const decoded = token ? decodeJwt(token) : null;
+
+const initialState: AuthState = {
+  name: decoded?.name || "",
+  email: decoded?.email || "",
+  loading: false,
+  error: null,
+};
 
 export const loginThunk = createAsyncThunk(
   "auth/login",
