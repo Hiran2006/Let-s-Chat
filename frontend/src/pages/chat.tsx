@@ -24,6 +24,8 @@ interface Chat {
   timestamp: string;
   unreadCount: number;
   messages: Message[];
+  hasMoreMessages?: boolean;
+  isLoadingMessages?: boolean;
 }
 
 interface User {
@@ -42,6 +44,10 @@ export default function ChatPage() {
   const [searchQuery, setSearchQuery] = useState("");
   const [typedMessage, setTypedMessage] = useState("");
   
+  // Pagination State for Chat List
+  const [hasMoreChats, setHasMoreChats] = useState(true);
+  const [isLoadingChats, setIsLoadingChats] = useState(false);
+
   // State for Create Chat Modal
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [newChatName, setNewChatName] = useState("");
@@ -54,6 +60,8 @@ export default function ChatPage() {
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const socketRef = useRef<Socket | null>(null);
   const selectedChatIdRef = useRef<string | null>(null);
+  const chatListScrollRef = useRef<HTMLDivElement>(null);
+  const messageContainerRef = useRef<HTMLDivElement>(null);
 
   // Sync ref to selectedChatId to avoid stale closures in socket events
   useEffect(() => {
@@ -67,16 +75,37 @@ export default function ChatPage() {
     }
   }, [userEmail, navigate]);
 
-  // Fetch initial chats list
-  const fetchChats = async () => {
+  // Fetch initial or paginated chats list
+  const fetchChats = async (isLoadMore = false) => {
     if (!userEmail) return;
+    
+    let currentChatsLength = 0;
+    setChats(prev => {
+      currentChatsLength = prev.length;
+      return prev;
+    });
+
+    setIsLoadingChats(true);
     try {
-      const response = await makeANetworkCall("/api/chats", "GET");
+      const offset = isLoadMore ? currentChatsLength : 0;
+      const response = await makeANetworkCall(`/api/chats?limit=15&offset=${offset}`, "GET");
       if (response.data?.success) {
-        setChats(response.data.chats || []);
+        const newChats = response.data.chats || [];
+        setChats((prevChats) => {
+          if (isLoadMore) {
+            const existingIds = new Set(prevChats.map(c => c.id));
+            const filteredNew = newChats.filter((c: any) => !existingIds.has(c.id));
+            return [...prevChats, ...filteredNew];
+          } else {
+            return newChats;
+          }
+        });
+        setHasMoreChats(response.data.hasMore);
       }
     } catch (error) {
       console.error("Failed to load chats:", error);
+    } finally {
+      setIsLoadingChats(false);
     }
   };
 
@@ -110,10 +139,10 @@ export default function ChatPage() {
       setChats((prevChats) => {
         return prevChats.map((c) => {
           if (c.id === msg.chatId) {
-            const exists = c.messages.some((m) => m.id === msg.id);
+            const exists = c.messages?.some((m) => m.id === msg.id);
             const updatedMessages = exists 
               ? c.messages 
-              : [...c.messages, {
+              : [...(c.messages || []), {
                   id: msg.id,
                   sender: msg.sender,
                   senderName: msg.senderName,
@@ -136,6 +165,20 @@ export default function ChatPage() {
           return c;
         });
       });
+
+      // Handle scroll to bottom if active chat receives a new message
+      if (msg.chatId === selectedChatIdRef.current) {
+        const isSelf = msg.sender === userEmail;
+        const container = messageContainerRef.current;
+        if (container) {
+          const isNearBottom = container.scrollHeight - container.scrollTop - container.clientHeight < 100;
+          if (isSelf || isNearBottom) {
+            setTimeout(() => {
+              scrollToBottom("smooth");
+            }, 50);
+          }
+        }
+      }
     });
 
     socket.on("chat_update", (data: { chatId: string; lastMessage: string; timestamp: string }) => {
@@ -170,10 +213,116 @@ export default function ChatPage() {
     };
   }, [userEmail]);
 
-  // Scroll to bottom when active chat or messages change
-  useEffect(() => {
-    messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
-  }, [activeChat?.messages]);
+  const scrollToBottom = (behavior: "auto" | "smooth" = "auto") => {
+    if (messageContainerRef.current) {
+      messageContainerRef.current.scrollTo({
+        top: messageContainerRef.current.scrollHeight,
+        behavior,
+      });
+    }
+  };
+
+  // Helper for scroll listener of Chat List
+  const handleChatListScroll = () => {
+    if (!chatListScrollRef.current) return;
+    const { scrollTop, scrollHeight, clientHeight } = chatListScrollRef.current;
+    if (scrollHeight - scrollTop - clientHeight < 20 && hasMoreChats && !isLoadingChats) {
+      fetchChats(true);
+    }
+  };
+
+  // Fetch messages from database with pagination
+  const fetchMessages = async (chatId: string, isLoadMore = false) => {
+    let targetChat: Chat | undefined;
+    setChats(prevChats => {
+      targetChat = prevChats.find(c => c.id === chatId);
+      return prevChats;
+    });
+
+    if (!targetChat) return;
+    if (targetChat.isLoadingMessages) return;
+
+    setChats(prevChats =>
+      prevChats.map(c => c.id === chatId ? { ...c, isLoadingMessages: true } : c)
+    );
+
+    try {
+      const currentMessagesLength = targetChat.messages?.length || 0;
+      const offset = isLoadMore ? currentMessagesLength : 0;
+      const response = await makeANetworkCall(
+        `/api/chats/${chatId}/messages?limit=20&offset=${offset}`,
+        "GET"
+      );
+
+      if (response.data?.success) {
+        const fetchedMsgs = response.data.messages || [];
+        const hasMore = response.data.hasMore;
+
+        const container = messageContainerRef.current;
+        const priorScrollHeight = container ? container.scrollHeight : 0;
+        const priorScrollTop = container ? container.scrollTop : 0;
+
+        setChats(prevChats =>
+          prevChats.map(c => {
+            if (c.id === chatId) {
+              let newMessages = c.messages || [];
+              if (isLoadMore) {
+                const existingIds = new Set(newMessages.map(m => m.id));
+                const filteredNew = fetchedMsgs.filter((m: any) => !existingIds.has(m.id));
+                newMessages = [...filteredNew, ...newMessages];
+              } else {
+                newMessages = fetchedMsgs;
+              }
+
+              return {
+                ...c,
+                messages: newMessages,
+                hasMoreMessages: hasMore,
+                isLoadingMessages: false
+              };
+            }
+            return c;
+          })
+        );
+
+        if (isLoadMore) {
+          if (fetchedMsgs.length > 0) {
+            setTimeout(() => {
+              if (container) {
+                const newScrollHeight = container.scrollHeight;
+                container.scrollTop = priorScrollTop + (newScrollHeight - priorScrollHeight);
+              }
+            }, 0);
+          }
+        } else {
+          setTimeout(() => {
+            scrollToBottom();
+          }, 50);
+        }
+      } else {
+        setChats(prevChats =>
+          prevChats.map(c => c.id === chatId ? { ...c, isLoadingMessages: false } : c)
+        );
+      }
+    } catch (error) {
+      console.error("Failed to load messages:", error);
+      setChats(prevChats =>
+        prevChats.map(c => c.id === chatId ? { ...c, isLoadingMessages: false } : c)
+      );
+    }
+  };
+
+  const handleMessageScroll = () => {
+    const container = messageContainerRef.current;
+    if (!container || !selectedChatId) return;
+
+    if (container.scrollTop < 10) {
+      const activeChatObj = chats.find(c => c.id === selectedChatId);
+      if (activeChatObj && activeChatObj.hasMoreMessages && !activeChatObj.isLoadingMessages) {
+        fetchMessages(selectedChatId, true);
+      }
+    }
+  };
 
   // Fetch users when starting a new chat
   useEffect(() => {
@@ -222,17 +371,7 @@ export default function ChatPage() {
       prevChats.map(c => c.id === chatId ? { ...c, unreadCount: 0 } : c)
     );
 
-    // Fetch messages from database
-    try {
-      const response = await makeANetworkCall(`/api/chats/${chatId}/messages`, "GET");
-      if (response.data?.success) {
-        setChats(prevChats => 
-          prevChats.map(c => c.id === chatId ? { ...c, messages: response.data.messages } : c)
-        );
-      }
-    } catch (error) {
-      console.error("Failed to load messages:", error);
-    }
+    await fetchMessages(chatId, false);
   };
 
   const handleToggleUser = (email: string) => {
@@ -279,14 +418,7 @@ export default function ChatPage() {
         // Fetch chats and select the active chat
         await fetchChats();
         setSelectedChatId(chatId);
-        
-        // Fetch message history
-        const msgResponse = await makeANetworkCall(`/api/chats/${chatId}/messages`, "GET");
-        if (msgResponse.data?.success) {
-          setChats(prevChats => 
-            prevChats.map(c => c.id === chatId ? { ...c, messages: msgResponse.data.messages } : c)
-          );
-        }
+        await fetchMessages(chatId, false);
 
         setIsModalOpen(false);
       }
@@ -368,7 +500,11 @@ export default function ChatPage() {
         </div>
 
         {/* Chat List Scrollable Area */}
-        <div className="flex-1 overflow-y-auto px-3 pb-6 space-y-1">
+        <div 
+          ref={chatListScrollRef}
+          onScroll={handleChatListScroll}
+          className="flex-1 overflow-y-auto px-3 pb-6 space-y-1"
+        >
           {filteredChats.length === 0 ? (
             <div className="text-center py-10 px-6">
               <p className="text-sm text-gray-500">No conversations found</p>
@@ -424,6 +560,14 @@ export default function ChatPage() {
               );
             })
           )}
+          {isLoadingChats && (
+            <div className="flex justify-center py-4">
+              <svg className="animate-spin h-5 w-5 text-indigo-500" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
+                <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+              </svg>
+            </div>
+          )}
         </div>
       </div>
 
@@ -463,7 +607,22 @@ export default function ChatPage() {
             </div>
 
             {/* Message Area */}
-            <div className="flex-1 overflow-y-auto px-8 py-6 space-y-4">
+            <div 
+              ref={messageContainerRef}
+              onScroll={handleMessageScroll}
+              className="flex-1 overflow-y-auto px-8 py-6 space-y-4"
+            >
+              {activeChat.isLoadingMessages && activeChat.messages && activeChat.messages.length > 0 && (
+                <div className="flex justify-center py-2">
+                  <span className="text-xs text-indigo-400 font-medium animate-pulse flex items-center gap-2">
+                    <svg className="animate-spin h-4 w-4 text-indigo-500" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                      <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
+                      <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                    </svg>
+                    Loading older messages...
+                  </span>
+                </div>
+              )}
               {!activeChat.messages || activeChat.messages.length === 0 ? (
                 <div className="flex flex-col items-center justify-center h-full text-center">
                   <div className="h-14 w-14 rounded-full bg-white/5 flex items-center justify-center text-indigo-400 mb-4 animate-bounce">
