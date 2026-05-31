@@ -12,7 +12,9 @@ router.use(authenticate);
 router.get("/", async (req: AuthenticatedRequest, res): Promise<any> => {
   try {
     const userId = req.user!.id;
-    const userChats = await chats.getUserChats(userId);
+    const limit = req.query.limit ? parseInt(req.query.limit as string) : undefined;
+    const offset = req.query.offset ? parseInt(req.query.offset as string) : undefined;
+    const userChats = await chats.getUserChats(userId, limit, offset);
 
     const processedChats = await Promise.all(
       userChats.map(async (chat) => {
@@ -58,7 +60,11 @@ router.get("/", async (req: AuthenticatedRequest, res): Promise<any> => {
       })
     );
 
-    res.json({ success: true, chats: processedChats });
+    res.json({ 
+      success: true, 
+      chats: processedChats,
+      hasMore: typeof limit === "number" ? processedChats.length === limit : false
+    });
   } catch (error) {
     console.error("Get chats error:", error);
     res.status(500).json({ success: false, message: "Failed to fetch chats" });
@@ -83,7 +89,9 @@ router.get("/:chatId/messages", async (req: AuthenticatedRequest, res): Promise<
         .json({ success: false, message: "Not authorized to view this chat" });
     }
 
-    const messages = await chats.getChatMessages(chatId);
+    const limit = req.query.limit ? parseInt(req.query.limit as string) : undefined;
+    const offset = req.query.offset ? parseInt(req.query.offset as string) : undefined;
+    const messages = await chats.getChatMessages(chatId, limit, offset);
 
     const processedMessages = messages.map((msg) => {
       let formattedTime = "";
@@ -106,7 +114,11 @@ router.get("/:chatId/messages", async (req: AuthenticatedRequest, res): Promise<
       };
     });
 
-    res.json({ success: true, messages: processedMessages });
+    res.json({ 
+      success: true, 
+      messages: processedMessages,
+      hasMore: typeof limit === "number" ? processedMessages.length === limit : false
+    });
   } catch (error) {
     console.error("Get messages error:", error);
     res.status(500).json({ success: false, message: "Failed to fetch messages" });

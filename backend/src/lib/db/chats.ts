@@ -1,9 +1,8 @@
 import db from "./db.js";
 
-const getUserChats = (userId: number): Promise<any[]> => {
+const getUserChats = (userId: number, limit?: number, offset?: number): Promise<any[]> => {
   return new Promise((resolve, reject) => {
-    db.all(
-      `
+    let query = `
       SELECT 
         chats.id,
         chats.type,
@@ -24,13 +23,16 @@ const getUserChats = (userId: number): Promise<any[]> => {
       LEFT JOIN users sender ON m.sender_id = sender.id
       WHERE chat_members.user_id = ?
       ORDER BY COALESCE(m.created_at, chats.created_at) DESC
-      `,
-      [userId],
-      (err, rows) => {
-        if (err) reject(err);
-        else resolve(rows || []);
-      },
-    );
+    `;
+    const params: any[] = [userId];
+    if (typeof limit === "number" && typeof offset === "number") {
+      query += ` LIMIT ? OFFSET ?`;
+      params.push(limit, offset);
+    }
+    db.all(query, params, (err, rows) => {
+      if (err) reject(err);
+      else resolve(rows || []);
+    });
   });
 };
 
@@ -52,10 +54,9 @@ const getChatMembers = (chatId: number): Promise<any[]> => {
   });
 };
 
-const getChatMessages = (chatId: number): Promise<any[]> => {
+const getChatMessages = (chatId: number, limit?: number, offset?: number): Promise<any[]> => {
   return new Promise((resolve, reject) => {
-    db.all(
-      `
+    let query = `
       SELECT 
         messages.id,
         messages.chat_id as chatId,
@@ -66,14 +67,24 @@ const getChatMessages = (chatId: number): Promise<any[]> => {
       FROM messages
       JOIN users ON messages.sender_id = users.id
       WHERE messages.chat_id = ?
-      ORDER BY messages.created_at ASC
-      `,
-      [chatId],
-      (err, rows) => {
-        if (err) reject(err);
-        else resolve(rows || []);
-      },
-    );
+    `;
+    const params: any[] = [chatId];
+    if (typeof limit === "number" && typeof offset === "number") {
+      query += ` ORDER BY messages.created_at DESC LIMIT ? OFFSET ?`;
+      params.push(limit, offset);
+    } else {
+      query += ` ORDER BY messages.created_at ASC`;
+    }
+    db.all(query, params, (err, rows) => {
+      if (err) {
+        reject(err);
+      } else {
+        if (typeof limit === "number" && typeof offset === "number" && rows) {
+          rows.reverse();
+        }
+        resolve(rows || []);
+      }
+    });
   });
 };
 
